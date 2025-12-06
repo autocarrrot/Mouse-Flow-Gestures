@@ -1,4 +1,4 @@
-﻿#Requires AutoHotkey v2.0
+#Requires AutoHotkey v2.0
 
 ; --- Include the v2 library ---
 ; Ensure "VirtualDesktop.ah2" (or "VD.ahk") is in the same folder.
@@ -13,10 +13,13 @@ global LastCreatedDesktopNum := 0
 ; --- Flags ---
 global GestureCancelled := false
 global SideButtonActionTaken := false 
+global IsDoubleTap := false
 
 ; ==============================================================================
 ;    1. MIDDLE MOUSE BUTTON (Desktop & Task View)
 ; ==============================================================================
+; These hotkeys are DISABLED if Blender is the active window.
+#HotIf !WinActive("ahk_exe blender.exe")
 
 MButton:: {
     global StartX, StartY, GestureCancelled
@@ -43,6 +46,8 @@ MButton Up:: {
     }
 }
 
+#HotIf ; End of Blender Exception
+
 ; ==============================================================================
 ;    2. FRONT SIDE BUTTON (MB5 / XButton2) -> Copy, Media Controls
 ; ==============================================================================
@@ -62,10 +67,12 @@ XButton2 Up:: {
     global GestureCancelled, SideButtonActionTaken, StartX, StartY, MoveThreshold
     SetTimer(WatchMouse, 0)
 
+    ; If gesture or chord happened, do nothing
     if (GestureCancelled || SideButtonActionTaken) {
         return
     }
 
+    ; No gesture -> Perform Copy (Instant)
     MouseGetPos(&CurrentX, &CurrentY)
     local DeltaX := Abs(CurrentX - StartX)
     local DeltaY := Abs(CurrentY - StartY)
@@ -75,23 +82,28 @@ XButton2 Up:: {
     }
 }
 
+; --- MB5 HELD CONTEXT ---
 #HotIf GetKeyState("XButton2", "P")
+
     ; CHORD: Hold MB5 + Click MB4 -> Play/Pause
     XButton1:: {
-        global GestureCancelled := true 
+        global GestureCancelled := true ; Cancel MB5's Copy action
         Send("{Media_Play_Pause}")
     }
+    ; Consume the 'Up' event so it doesn't trigger Paste logic
     XButton1 Up:: return 
+
 #HotIf
 
 ; ==============================================================================
 ;    3. BACK SIDE BUTTON (MB4 / XButton1) -> Paste, Tabs, Window Mgmt
 ; ==============================================================================
-; Click: Paste (Instant)
+; Click: Paste (Instant - No Delay)
+; Double-Tap: Nothing
 ; Hold + MB5: Play/Pause
 ; Hold + Scroll: Switch Tabs
 ; Hold + Swipe Left/Right: Move Window to Desktop
-; Hold + Swipe Up: Pin Window (WITH NOTIFICATION)
+; Hold + Swipe Up: Pin Window (Show on all desktops)
 ; Hold + Swipe Down: Show Desktop
 
 XButton1:: {
@@ -106,10 +118,12 @@ XButton1 Up:: {
     global GestureCancelled, SideButtonActionTaken, StartX, StartY, MoveThreshold
     SetTimer(WatchMouse, 0)
 
+    ; If gesture, scroll or chord happened, do nothing
     if (GestureCancelled || SideButtonActionTaken) {
         return
     }
 
+    ; No gesture -> Perform Paste (Instant)
     MouseGetPos(&CurrentX, &CurrentY)
     local DeltaX := Abs(CurrentX - StartX)
     local DeltaY := Abs(CurrentY - StartY)
@@ -119,12 +133,15 @@ XButton1 Up:: {
     }
 }
 
+; --- MB4 HELD CONTEXT ---
 #HotIf GetKeyState("XButton1", "P")
+
     ; 1. CHORD: Hold MB4 + Click MB5 -> Play/Pause
     XButton2:: {
-        global GestureCancelled := true 
+        global GestureCancelled := true ; Cancel MB4's Paste action
         Send("{Media_Play_Pause}")
     }
+    ; Consume the 'Up' event so it doesn't trigger Copy logic
     XButton2 Up:: return
 
     ; 2. SCROLL: Tab Switching
@@ -136,6 +153,7 @@ XButton1 Up:: {
         global SideButtonActionTaken := true
         Send("^{Tab}")
     }
+
 #HotIf
 
 ; ==============================================================================
@@ -191,11 +209,12 @@ WatchMouse() {
         if (CurrentX > StartX + MoveThreshold) { 
             n := VD.getCurrentDesktopNum()
             count := VD.getCount()
+            
             if (n < count) {
                 n += 1
                 VD.MoveWindowToDesktopNum(WinActive("A"), n)
                 VD.goToDesktopNum(n)
-            } else { 
+            } else { ; At the end -> Create new
                 VD.createDesktop(false)
                 n += 1
                 VD.MoveWindowToDesktopNum(WinActive("A"), n)
@@ -217,7 +236,7 @@ WatchMouse() {
             SetTimer(WatchMouse, 0)
         }
         
-        ; Swipe Up -> Toggle Pin Window (Show on All Desktops)
+        ; Swipe Up -> Pin Window (Show on all Desktops)
         else if (CurrentY < StartY - MoveThreshold) { 
             hwnd := WinActive("A")
             if (VD.IsWindowPinned(hwnd)) {
@@ -234,9 +253,9 @@ WatchMouse() {
             SetTimer(WatchMouse, 0)
         }
         
-        ; Swipe Down -> Show Desktop
+        ; Swipe Down -> Show Desktop (Minimize All)
         else if (CurrentY > StartY + MoveThreshold) { 
-            Send("#d") 
+            Send("#d") ; Win + D
             GestureCancelled := true
             SetTimer(WatchMouse, 0)
         }
@@ -244,7 +263,7 @@ WatchMouse() {
 }
 
 ; ==============================================================================
-;    4. KEYBOARD HOTKEYS (Window Moving across Desktops)
+;    4. KEYBOARD HOTKEYS (Window Moving & Desktops)
 ; ==============================================================================
 
 #^+Left:: {
@@ -285,3 +304,49 @@ WatchMouse() {
     VD.MoveWindowToDesktopNum(WinActive("A"), n)
     VD.goToDesktopNum(n)
 }
+
+; ==============================================================================
+;    5. DIRECT DESKTOP SWITCHING (Win+N and TaskView N)
+; ==============================================================================
+
+; --- Helper Function: Switch Safely ---
+SwitchToDesktopSafe(targetDesktopNum) {
+    count := VD.getCount()
+    if (targetDesktopNum > count) {
+        targetDesktopNum := count ; Fallback to the last available desktop
+    }
+    VD.goToDesktopNum(targetDesktopNum)
+}
+
+; --- Helper Function: Switch & Escape (For Task View) ---
+TaskViewSwitch(targetDesktopNum) {
+    SwitchToDesktopSafe(targetDesktopNum)
+    Send("{Esc}") ; Close Task View immediately
+}
+
+; --- A. Win + Number (1-9, 0) ---
+; Overrides default Taskbar app switching behavior
+Loop 10 {
+    i := A_Index
+    dNum := (i == 10) ? 10 : i ; Map '0' to Desktop 10, '1' to 1
+    
+    ; Bind the variable dNum to the function so it doesn't get overwritten
+    Hotkey "#" . ((i == 10) ? "0" : i), ((n, *) => SwitchToDesktopSafe(n)).Bind(dNum)
+}
+
+; --- B. Task View Mode (Just Numbers 1-9, 0) ---
+; Active only when "Task View" is the active window.
+
+IsTaskViewActive(*) {
+    return WinActive(VD._getLocalizedWord_TaskView()) || WinActive("ahk_class MultitaskingViewFrame")
+}
+
+HotIf IsTaskViewActive
+    Loop 10 {
+        i := A_Index
+        dNum := (i == 10) ? 10 : i
+        
+        ; Bind numbers 1-9 and 0 to the Switch & Escape function
+        Hotkey ((i == 10) ? "0" : String(i)), ((n, *) => TaskViewSwitch(n)).Bind(dNum)
+    }
+HotIf
