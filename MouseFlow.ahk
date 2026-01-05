@@ -49,11 +49,12 @@ MButton Up:: {
 #HotIf ; End of Blender Exception
 
 ; ==============================================================================
-;    2. FRONT SIDE BUTTON (MB5 / XButton2) -> Copy, Media Controls
+;    2. FRONT SIDE BUTTON (MB5 / XButton2) -> Copy, Media & Volume
 ; ==============================================================================
 ; Click: Copy (Instant)
 ; Hold + MB4: Play/Pause
 ; Hold + Swipe: Next/Prev Track
+; Hold + Scroll: Volume Up/Down (NEW)
 
 XButton2:: {
     global StartX, StartY, GestureCancelled, SideButtonActionTaken
@@ -67,7 +68,7 @@ XButton2 Up:: {
     global GestureCancelled, SideButtonActionTaken, StartX, StartY, MoveThreshold
     SetTimer(WatchMouse, 0)
 
-    ; If gesture or chord happened, do nothing
+    ; If gesture, scroll, or chord happened, do nothing
     if (GestureCancelled || SideButtonActionTaken) {
         return
     }
@@ -85,13 +86,23 @@ XButton2 Up:: {
 ; --- MB5 HELD CONTEXT ---
 #HotIf GetKeyState("XButton2", "P")
 
-    ; CHORD: Hold MB5 + Click MB4 -> Play/Pause
+    ; 1. CHORD: Hold MB5 + Click MB4 -> Play/Pause
     XButton1:: {
         global GestureCancelled := true ; Cancel MB5's Copy action
         Send("{Media_Play_Pause}")
     }
     ; Consume the 'Up' event so it doesn't trigger Paste logic
     XButton1 Up:: return 
+
+    ; 2. SCROLL: Volume Control (NEW)
+    WheelUp:: {
+        global SideButtonActionTaken := true
+        Send("{Volume_Up}")
+    }
+    WheelDown:: {
+        global SideButtonActionTaken := true
+        Send("{Volume_Down}")
+    }
 
 #HotIf
 
