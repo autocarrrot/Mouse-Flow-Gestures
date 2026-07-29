@@ -10,8 +10,8 @@
 ;    NAVIGATION - switch desktop, task view, skip track - fires the instant you
 ;    cross the 40px threshold. Nothing to wait for.
 ;
-;    WINDOW ACTIONS - move, pin, snap, show desktop, always-on-top - ARM at the
-;    threshold and FIRE when you release, with an OSD showing what will happen:
+;    WINDOW ACTIONS - move, pin, snap, show desktop - ARM at the threshold and
+;    FIRE when you release, with an OSD showing what will happen:
 ;       drag back to the centre .......... cancels
 ;       press Esc while holding .......... cancels
 ;       press / release Shift mid-swipe .. switches to the Shift action live
@@ -25,10 +25,8 @@
 ;    swipe right .......... switch to the desktop on the LEFT
 ;    swipe up / down ...... task view
 ;
-;  MB5 / FRONT SIDE BUTTON   (media + clipboard)
+;  MB5 / FRONT SIDE BUTTON   (copy + media)
 ;    click ................ copy
-;    double tap ........... clipboard history (Win+V)
-;    hold still + release . mute / unmute
 ;    swipe left ........... next track
 ;    swipe right .......... previous track
 ;    SHIFT + swipe left ... snap window to the left half
@@ -38,9 +36,8 @@
 ;    hold + scroll ........ volume up / down
 ;    hold + click MB4 ..... play / pause
 ;
-;  MB4 / BACK SIDE BUTTON    (windows + desktops)
+;  MB4 / BACK SIDE BUTTON    (paste + windows)
 ;    click ................ paste
-;    hold still + release . toggle always-on-top
 ;    swipe left ........... move window to the previous desktop AND follow it
 ;    swipe right .......... move window to the next desktop AND follow it
 ;    SHIFT + swipe left ... send window to the previous desktop, STAY here
@@ -86,6 +83,8 @@
 #Include VirtualDesktop.ah2
 
 ListLines(false)              ; hot path runs on a 10ms timer, skip the logging
+SendMode("Input")             ; the fastest send method
+SetKeyDelay(-1, -1)
 SetWinDelay(-1)
 CoordMode("Mouse", "Screen")  ; MouseGetPos must be screen-relative for the OSD
 
@@ -97,31 +96,28 @@ CoordMode("Mouse", "Screen")  ; MouseGetPos must be screen-relative for the OSD
 ; The .ini written by the rules panel overrides whatever is set here.
 
 global BlockIn := Map(
-    "GLOBAL",           [],                  ; e.g. ["valorant.exe"]
+    "GLOBAL",        [],                  ; e.g. ["valorant.exe"]
 
     ; middle mouse
-    "MiddleButton",     ["blender.exe"],     ; master switch for the MMB hook
-    "DesktopSwipe",     [],                  ; MMB swipe L/R
-    "TaskView",         [],                  ; MMB swipe U/D
+    "MiddleButton",  ["blender.exe"],     ; master switch for the MMB hook
+    "DesktopSwipe",  [],                  ; MMB swipe L/R
+    "TaskView",      [],                  ; MMB swipe U/D
 
     ; side buttons
-    "CopyPaste",        [],                  ; MB5 click / MB4 click
-    "ClipboardHistory", [],                  ; MB5 double tap
-    "MediaSwipe",       [],                  ; MB5 swipe
-    "WindowSnap",       [],                  ; SHIFT + MB5 swipe
-    "Volume",           [],                  ; MB5 hold + scroll
-    "Mute",             [],                  ; MB5 long press
-    "PlayPause",        [],                  ; MB4 + MB5 chord
-    "TabSwitch",        [],                  ; MB4 hold + scroll
-    "WindowMove",       [],                  ; MB4 swipe L/R
-    "PinWindow",        [],                  ; MB4 swipe up
-    "ShowDesktop",      [],                  ; MB4 swipe down
-    "AlwaysOnTop",      [],                  ; MB4 long press
+    "CopyPaste",     [],                  ; MB5 click / MB4 click
+    "MediaSwipe",    [],                  ; MB5 swipe
+    "WindowSnap",    [],                  ; SHIFT + MB5 swipe
+    "Volume",        [],                  ; MB5 hold + scroll
+    "PlayPause",     [],                  ; MB4 + MB5 chord
+    "TabSwitch",     [],                  ; MB4 hold + scroll
+    "WindowMove",    [],                  ; MB4 swipe L/R
+    "PinWindow",     [],                  ; MB4 swipe up
+    "ShowDesktop",   [],                  ; MB4 swipe down
 
     ; keyboard
-    "KeyboardVD",       [],                  ; Win+Ctrl+Shift+arrows
-    "WinNumber",        [],                  ; Win+1..0
-    "TaskViewNums",     []                   ; 1..0 inside task view
+    "KeyboardVD",    [],                  ; Win+Ctrl+Shift+arrows
+    "WinNumber",     [],                  ; Win+1..0
+    "TaskViewNums",  []                   ; 1..0 inside task view
 )
 
 ; A feature listed here works ONLY in the listed apps.
@@ -133,8 +129,6 @@ global OnlyIn := Map()
 ; ==============================================================================
 global ConfigFile        := A_ScriptDir "\" RegExReplace(A_ScriptName, "\.ahk$", "") ".ini"
 global MoveThreshold     := 40      ; px of travel before a swipe triggers
-global LongPressTime     := 350     ; ms held still before the long press arms
-global DoubleTapTime     := 300     ; ms window for the MB5 double tap
 global ActionCooldown    := 220     ; ms minimum between desktop actions
 global OSDEnabled        := true    ; on-screen readout
 global AutoCreateDesktop := true    ; swiping past the last desktop creates one
@@ -143,6 +137,12 @@ global RepeatSwipes      := false   ; true = keep holding and swipe again to
                                     ; repeat an instant action, without re-clicking
 global AutoElevate       := false   ; true = relaunch as admin, UAC prompt every
                                     ; boot. Task Scheduler is the better route.
+
+; Copy normally fires on the release of MB5, which is what makes a click a click.
+; Set this to true to fire it on the PRESS instead - the absolute fastest it can
+; be. The catch: MB5 is also the modifier for volume, media and snapping, so
+; every one of those will overwrite your clipboard if something is selected.
+global CopyOnPress       := false
 
 ; Actions that fire the moment you cross the threshold, with no preview and no
 ; OSD. Navigation is instant; anything that manipulates a window waits for the
@@ -155,15 +155,12 @@ global InstantActions := ["vd_left", "vd_right", "taskview", "media_prev", "medi
 global StartX := 0, StartY := 0
 global GestureExe := ""              ; exe that was focused when the gesture began
 global GestureBtn := ""              ; button that owns the gesture in flight
-global PressTime := 0
 global Armed := ""                   ; action id currently armed
-global HasMoved := false
 global Cancelled := false
 global LastActionTime := 0
-global LastMB5Up := 0
 global LastCreatedDesktopNum := 0
 global ExeCache := "", ExeCacheTime := 0
-global OSD := "", OSDText := ""
+global OSD := "", OSDText := "", OSDVisible := false
 global OSDW := 300, OSDH := 52
 global RulePanel := "", RuleExe := "", RuleBoxes := Map(), RuleMaster := ""
 
@@ -275,7 +272,7 @@ MonitorUnderMouse(&L, &T, &R, &B) {
 }
 
 ShowOSDText(txt) {
-    global OSD, OSDText, OSDW, OSDH, OSDEnabled
+    global OSD, OSDText, OSDW, OSDH, OSDEnabled, OSDVisible
     if (!OSDEnabled || txt = "")
         return
     SetTimer(HideOSD, 0)
@@ -285,6 +282,7 @@ ShowOSDText(txt) {
     y := B - (B - T) // 6 - OSDH
     OSD.Show("NoActivate x" x " y" y " w" OSDW " h" OSDH)
     WinSetTransparent(230, "ahk_id " OSD.Hwnd)
+    OSDVisible := true
 }
 
 ShowOSDFor(txt, ms := 1200) {
@@ -293,8 +291,11 @@ ShowOSDFor(txt, ms := 1200) {
 }
 
 HideOSD() {
-    global OSD
+    global OSD, OSDVisible
     SetTimer(HideOSD, 0)
+    if !OSDVisible                       ; never touch the window needlessly
+        return
+    OSDVisible := false
     try OSD.Hide()
 }
 
@@ -315,8 +316,6 @@ ActionFeature(id) {
              "move_prev_stay", "move_next_stay":    return "WindowMove"
         case "pin":                                 return "PinWindow"
         case "showdesktop":                         return "ShowDesktop"
-        case "aot":                                 return "AlwaysOnTop"
-        case "mute":                                return "Mute"
     }
     return ""
 }
@@ -365,8 +364,6 @@ ActionLabel(id) {
         case "move_next_stay":  return "Send to " NeighbourLabel(1) " (stay)"
         case "pin":             return IsPinned() ? "Unpin window" : "Pin to all desktops"
         case "showdesktop":     return "Show desktop"
-        case "aot":             return IsOnTop() ? "Always on top: OFF" : "Always on top: ON"
-        case "mute":            return "Mute / unmute"
     }
     return ""
 }
@@ -392,8 +389,6 @@ RunAction(id) {
         case "move_prev_stay":  MoveWindowDesktop(-1, false)
         case "pin":             TogglePin()
         case "showdesktop":     SendA("#d")
-        case "aot":             ToggleAlwaysOnTop()
-        case "mute":            SendA("{Volume_Mute}")
     }
 }
 
@@ -458,36 +453,16 @@ TogglePin() {
     }
 }
 
-IsOnTop() {
-    hwnd := WinActive("A")
-    if !hwnd
-        return false
-    try return (WinGetExStyle("ahk_id " hwnd) & 0x8) ? true : false
-    return false
-}
-
-ToggleAlwaysOnTop() {
-    hwnd := WinActive("A")
-    if !hwnd
-        return
-    try {
-        WinSetAlwaysOnTop(-1, "ahk_id " hwnd)
-        ShowOSDFor(IsOnTop() ? "Always on top: ON" : "Always on top: OFF", 1200)
-    }
-}
-
 ; ==============================================================================
 ;    7. GESTURE ENGINE
 ; ==============================================================================
 
 StartGesture(btn) {
-    global StartX, StartY, GestureExe, GestureBtn, PressTime, Armed, HasMoved, Cancelled
+    global StartX, StartY, GestureExe, GestureBtn, Armed, Cancelled
     MouseGetPos(&StartX, &StartY)
     GestureExe := ActiveExe()
     GestureBtn := btn
-    PressTime  := A_TickCount
     Armed      := ""
-    HasMoved   := false
     Cancelled  := false
     SetTimer(WatchMouse, 10)
 }
@@ -495,6 +470,9 @@ StartGesture(btn) {
 ; The owner check matters: if you chord MB4 while MB5 is held and then release
 ; them in the wrong order, the release of a button that never started a gesture
 ; must not fall through to its click action.
+;
+; The click path is deliberately the shortest one through this function - there
+; is nothing between the check and the Send, so copy and paste stay snappy.
 EndGesture(btn, clickAction) {
     global Armed, GestureBtn, Cancelled
     SetTimer(WatchMouse, 0)
@@ -505,12 +483,12 @@ EndGesture(btn, clickAction) {
 
     if (owner != btn || wasCancelled)
         return
-    HideOSD()
-    if (action != "") {
-        RunAction(action)
+    if (action = "") {
+        clickAction.Call()
         return
     }
-    clickAction.Call()
+    HideOSD()
+    RunAction(action)
 }
 
 ; Which direction maps to which action, per button, with and without Shift
@@ -549,18 +527,9 @@ DirAction(btn, dir, shift) {
     return id
 }
 
-LongPressAction(btn) {
-    global GestureExe
-    id := (btn = "XButton1") ? "aot"
-        : (btn = "XButton2") ? "mute" : ""      ; MMB keeps its native hold
-    if (id != "" && !IsEnabledFor(ActionFeature(id), GestureExe))
-        return ""
-    return id
-}
-
 WatchMouse() {
-    global StartX, StartY, MoveThreshold, LongPressTime, PressTime
-    global Armed, GestureBtn, HasMoved, Cancelled, InstantActions, RepeatSwipes
+    global StartX, StartY, MoveThreshold
+    global Armed, GestureBtn, Cancelled, InstantActions, RepeatSwipes
 
     if (GestureBtn = "" || !GetKeyState(GestureBtn, "P")) {
         SetTimer(WatchMouse, 0)
@@ -578,17 +547,11 @@ WatchMouse() {
 
     MouseGetPos(&cx, &cy)
     dx := cx - StartX, dy := cy - StartY
-    shift := GetKeyState("Shift", "P")
     nextAction := ""
 
-    if (Abs(dx) < MoveThreshold && Abs(dy) < MoveThreshold) {
-        ; inside the dead zone
-        if (!HasMoved && (A_TickCount - PressTime) > LongPressTime)
-            nextAction := LongPressAction(GestureBtn)
-    } else {
-        HasMoved := true
+    if (Abs(dx) >= MoveThreshold || Abs(dy) >= MoveThreshold) {
         dir := (Abs(dx) > Abs(dy)) ? (dx > 0 ? "R" : "L") : (dy > 0 ? "D" : "U")
-        nextAction := DirAction(GestureBtn, dir, shift)
+        nextAction := DirAction(GestureBtn, dir, GetKeyState("Shift", "P"))
     }
 
     if (nextAction = Armed)
@@ -633,33 +596,35 @@ MMBClick() {
 }
 
 ; --- Front side button, MB5 ---
-#HotIf !GetKeyState("XButton1", "P") && AnyEnabled("CopyPaste", "ClipboardHistory", "MediaSwipe", "WindowSnap", "Volume", "Mute", "PlayPause")
-*XButton2::     StartGesture("XButton2")
+#HotIf !GetKeyState("XButton1", "P") && AnyEnabled("CopyPaste", "MediaSwipe", "WindowSnap", "Volume", "PlayPause")
+*XButton2:: {
+    global CopyOnPress, GestureExe
+    StartGesture("XButton2")
+    if (CopyOnPress && IsEnabledFor("CopyPaste", GestureExe))
+        SendA("^c")
+}
 *XButton2 Up::  EndGesture("XButton2", MB5Click)
 #HotIf
 
+; GestureExe was resolved when the button went down, so this does no OS calls.
 MB5Click() {
-    global LastMB5Up, DoubleTapTime
-    if (A_TickCount - LastMB5Up < DoubleTapTime && IsEnabled("ClipboardHistory")) {
-        LastMB5Up := 0
-        SendA("#v")                      ; clipboard history
-        return
-    }
-    LastMB5Up := A_TickCount
-    if IsEnabled("CopyPaste")
-        SendA("^c")
-    else
+    global GestureExe, CopyOnPress
+    if IsEnabledFor("CopyPaste", GestureExe) {
+        if !CopyOnPress
+            SendA("^c")
+    } else
         Send("{XButton2}")               ; let the app have its native button
 }
 
 ; --- Back side button, MB4 ---
-#HotIf !GetKeyState("XButton2", "P") && AnyEnabled("CopyPaste", "TabSwitch", "WindowMove", "PinWindow", "ShowDesktop", "AlwaysOnTop", "PlayPause")
+#HotIf !GetKeyState("XButton2", "P") && AnyEnabled("CopyPaste", "TabSwitch", "WindowMove", "PinWindow", "ShowDesktop", "PlayPause")
 *XButton1::     StartGesture("XButton1")
 *XButton1 Up::  EndGesture("XButton1", MB4Click)
 #HotIf
 
 MB4Click() {
-    if IsEnabled("CopyPaste")
+    global GestureExe
+    if IsEnabledFor("CopyPaste", GestureExe)
         SendA("^v")
     else
         Send("{XButton1}")               ; browser Back, etc.
@@ -809,33 +774,30 @@ HotIf
 ; knows which app it is editing. Nothing to guess at.
 
 global FeatureLabels := Map(
-    "GLOBAL",           "Enable Mouse Flow in this app",
-    "MiddleButton",     "All middle-button gestures",
-    "DesktopSwipe",     "Swipe L/R: switch desktop",
-    "TaskView",         "Swipe U/D: task view",
-    "MediaSwipe",       "Swipe: prev / next track",
-    "WindowSnap",       "Shift+swipe: snap window",
-    "Volume",           "Hold + scroll: volume",
-    "Mute",             "Long press: mute",
-    "ClipboardHistory", "Double tap: clipboard history",
-    "TabSwitch",        "Hold + scroll: switch tabs",
-    "WindowMove",       "Swipe L/R: move to desktop",
-    "PinWindow",        "Swipe up: pin window",
-    "ShowDesktop",      "Swipe down: show desktop",
-    "AlwaysOnTop",      "Long press: always on top",
-    "CopyPaste",        "Click: copy / paste",
-    "PlayPause",        "MB4+MB5: play / pause",
-    "KeyboardVD",       "Win+Ctrl+Shift+arrows",
-    "WinNumber",        "Win + number",
-    "TaskViewNums",     "Numbers in task view"
+    "GLOBAL",        "Enable Mouse Flow in this app",
+    "MiddleButton",  "All middle-button gestures",
+    "DesktopSwipe",  "Swipe L/R: switch desktop",
+    "TaskView",      "Swipe U/D: task view",
+    "MediaSwipe",    "Swipe: prev / next track",
+    "WindowSnap",    "Shift+swipe: snap window",
+    "Volume",        "Hold + scroll: volume",
+    "TabSwitch",     "Hold + scroll: switch tabs",
+    "WindowMove",    "Swipe L/R: move to desktop",
+    "PinWindow",     "Swipe up: pin window",
+    "ShowDesktop",   "Swipe down: show desktop",
+    "CopyPaste",     "Click: copy / paste",
+    "PlayPause",     "MB4+MB5: play / pause",
+    "KeyboardVD",    "Win+Ctrl+Shift+arrows",
+    "WinNumber",     "Win + number",
+    "TaskViewNums",  "Numbers in task view"
 )
 
 ; title, features, column (1 = left, 2 = right)
 global FeatureGroups := [
     ["Middle mouse",            ["MiddleButton", "DesktopSwipe", "TaskView"], 1],
-    ["Front side button (MB5)", ["MediaSwipe", "WindowSnap", "Volume", "Mute", "ClipboardHistory"], 1],
+    ["Front side button (MB5)", ["MediaSwipe", "WindowSnap", "Volume"], 1],
     ["Both side buttons",       ["CopyPaste", "PlayPause"], 1],
-    ["Back side button (MB4)",  ["TabSwitch", "WindowMove", "PinWindow", "ShowDesktop", "AlwaysOnTop"], 2],
+    ["Back side button (MB4)",  ["TabSwitch", "WindowMove", "PinWindow", "ShowDesktop"], 2],
     ["Keyboard",                ["KeyboardVD", "WinNumber", "TaskViewNums"], 2]
 ]
 
@@ -1066,8 +1028,8 @@ JoinList(arr) {
 }
 
 LoadConfig() {
-    global ConfigFile, BlockIn, OSDEnabled, AutoCreateDesktop, WrapDesktops, RepeatSwipes
-    global MoveThreshold, LongPressTime, DoubleTapTime, ActionCooldown
+    global ConfigFile, BlockIn, OSDEnabled, AutoCreateDesktop, WrapDesktops
+    global RepeatSwipes, CopyOnPress, MoveThreshold, ActionCooldown
     if !FileExist(ConfigFile)
         return
 
@@ -1084,15 +1046,14 @@ LoadConfig() {
     AutoCreateDesktop := IniRead(ConfigFile, "Settings", "AutoCreateDesktop", AutoCreateDesktop ? 1 : 0) + 0
     WrapDesktops      := IniRead(ConfigFile, "Settings", "WrapDesktops", WrapDesktops ? 1 : 0) + 0
     RepeatSwipes      := IniRead(ConfigFile, "Settings", "RepeatSwipes", RepeatSwipes ? 1 : 0) + 0
+    CopyOnPress       := IniRead(ConfigFile, "Settings", "CopyOnPress", CopyOnPress ? 1 : 0) + 0
     MoveThreshold     := IniRead(ConfigFile, "Settings", "MoveThreshold", MoveThreshold) + 0
-    LongPressTime     := IniRead(ConfigFile, "Settings", "LongPressTime", LongPressTime) + 0
-    DoubleTapTime     := IniRead(ConfigFile, "Settings", "DoubleTapTime", DoubleTapTime) + 0
     ActionCooldown    := IniRead(ConfigFile, "Settings", "ActionCooldown", ActionCooldown) + 0
 }
 
 SaveConfig() {
-    global ConfigFile, BlockIn, OSDEnabled, AutoCreateDesktop, WrapDesktops, RepeatSwipes
-    global MoveThreshold, LongPressTime, DoubleTapTime, ActionCooldown
+    global ConfigFile, BlockIn, OSDEnabled, AutoCreateDesktop, WrapDesktops
+    global RepeatSwipes, CopyOnPress, MoveThreshold, ActionCooldown
     try {
         for k in BlockIn
             IniWrite(JoinList(BlockIn[k]), ConfigFile, "BlockIn", k)
@@ -1100,9 +1061,8 @@ SaveConfig() {
         IniWrite(AutoCreateDesktop ? 1 : 0, ConfigFile, "Settings", "AutoCreateDesktop")
         IniWrite(WrapDesktops ? 1 : 0, ConfigFile, "Settings", "WrapDesktops")
         IniWrite(RepeatSwipes ? 1 : 0, ConfigFile, "Settings", "RepeatSwipes")
+        IniWrite(CopyOnPress ? 1 : 0, ConfigFile, "Settings", "CopyOnPress")
         IniWrite(MoveThreshold, ConfigFile, "Settings", "MoveThreshold")
-        IniWrite(LongPressTime, ConfigFile, "Settings", "LongPressTime")
-        IniWrite(DoubleTapTime, ConfigFile, "Settings", "DoubleTapTime")
         IniWrite(ActionCooldown, ConfigFile, "Settings", "ActionCooldown")
     }
 }
