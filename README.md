@@ -44,7 +44,7 @@ G  E  S  T  U  R  E  S
      press ──▶ move 40px ──▶ FIRES IMMEDIATELY
 
 
-   WINDOW ACTIONS            move · pin · snap · show desktop · on-top
+   WINDOW ACTIONS            move · pin · snap · show desktop
    ──────────────────────────────────────────────────────────────────
      press ──▶ move 40px ──▶ ARMED ──▶ release ──▶ FIRES
                                │
@@ -54,7 +54,7 @@ G  E  S  T  U  R  E  S
                                                   action, live
 ```
 
-While a window action is armed, an **OSD** near the bottom of the screen tells you exactly what is about to happen — *"Move to Desktop 3 ▸"*, *"Pin to all desktops"*, *"Always on top: ON"*.
+While a window action is armed, an **OSD** near the bottom of the screen tells you exactly what is about to happen — *"Move to Desktop 3 ▸"*, *"Pin to all desktops"*, *"Snap left"*.
 
 Which actions skip the preview is one line in the script:
 
@@ -97,8 +97,6 @@ Pull an id out to give it a preview. Add one in — `"pin"`, `"showdesktop"`, `"
                              ▼
 
          click  · · · · · · · · ·  copy                  Ctrl+C
-         double tap  · · · · · ·   clipboard history     Win+V
-         hold still, release  · ·  mute / unmute
          hold + scroll  · · · · ·  volume up / down
          hold + click MB4  · · ·   play / pause
 ```
@@ -116,12 +114,23 @@ Pull an id out to give it a preview. Add one in — `"pin"`, `"showdesktop"`, `"
                              ▼
 
          click  · · · · · · · · ·  paste                 Ctrl+V
-         hold still, release  · ·  toggle always-on-top
          hold + scroll  · · · · ·  switch tabs           Ctrl+Tab
          hold + click MB5  · · ·   play / pause
 ```
 
 > **`⇧ Shift` on MB4** sends the window to another desktop *without dragging you along with it.* Swiping past the last desktop creates a new one.
+
+### 📋 Copy & paste speed
+
+Copy and paste fire on the **release** of the button, with nothing in the code path between that release and the keystroke — no timers, no window calls, no lookups. That's what makes a click read as a click.
+
+If you want copy absolutely as early as physically possible, flip one setting and it fires on the **press** instead:
+
+```autohotkey
+global CopyOnPress := true
+```
+
+The trade: MB5 is also the modifier for volume, media and snapping — so with this on, every one of those overwrites your clipboard whenever something is selected. Off by default for that reason.
 
 ---
 
@@ -158,13 +167,11 @@ Press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>X</kbd> **while that 
  ║    [x] Swipe L/R: switch desktop   [x] Swipe L/R: move desktop  ║
  ║    [x] Swipe U/D: task view        [x] Swipe up: pin window     ║
  ║                                    [x] Swipe down: show desktop ║
- ║  Front side button (MB5)           [x] Long press: on top       ║
- ║    [x] Swipe: prev / next track                                 ║
- ║    [x] Shift+swipe: snap window  Keyboard                       ║
- ║    [x] Hold + scroll: volume       [x] Win+Ctrl+Shift+arrows    ║
- ║    [x] Long press: mute            [x] Win + number             ║
- ║    [x] Double tap: clipboard       [x] Numbers in task view     ║
- ║                                                                 ║
+ ║  Front side button (MB5)                                        ║
+ ║    [x] Swipe: prev / next track  Keyboard                       ║
+ ║    [x] Shift+swipe: snap window    [x] Win+Ctrl+Shift+arrows    ║
+ ║    [x] Hold + scroll: volume       [x] Win + number             ║
+ ║                                    [x] Numbers in task view     ║
  ║  Both side buttons                                              ║
  ║    [x] Click: copy / paste                                      ║
  ║    [x] MB4+MB5: play / pause                                    ║
@@ -215,8 +222,7 @@ global OnlyIn := Map("TabSwitch", ["chrome.exe", "msedge.exe"])
 | `MiddleButton` | `MediaSwipe` | `TabSwitch` | `CopyPaste` | `KeyboardVD` |
 | `DesktopSwipe` | `WindowSnap` | `WindowMove` | `PlayPause` | `WinNumber` |
 | `TaskView` | `Volume` | `PinWindow` | | `TaskViewNums` |
-| | `Mute` | `ShowDesktop` | | |
-| | `ClipboardHistory` | `AlwaysOnTop` | | |
+| | | `ShowDesktop` | | |
 
 `GLOBAL` is the master key — an app listed there gets the whole script disabled. The `.ini` written by the panel overrides whatever is set in the script.
 
@@ -230,13 +236,12 @@ The three you'll actually touch live at the bottom of the rules panel. The rest 
 
 ```autohotkey
 global MoveThreshold     := 40      ; px of travel before a swipe triggers
-global LongPressTime     := 350     ; ms held still before the long press arms
-global DoubleTapTime     := 300     ; ms window for the MB5 double tap
 global ActionCooldown    := 220     ; ms minimum between desktop actions
 global OSDEnabled        := true    ; on-screen readout
 global AutoCreateDesktop := true    ; swiping past the last desktop creates one
 global WrapDesktops      := false   ; ...or wraps around (only if the above is off)
 global RepeatSwipes      := false   ; keep holding and swipe again to repeat
+global CopyOnPress       := false   ; fire copy on press instead of release
 global AutoElevate       := false   ; relaunch as admin (UAC prompt every boot)
 ```
 
@@ -252,7 +257,6 @@ Settings and per-app rules persist to an `.ini` next to the script, named after 
 | Nothing works in Task Manager / installers | Elevated window — run the script as admin |
 | Swipes fire too easily | Raise `MoveThreshold` |
 | A gesture feels sluggish | It's waiting for the release — add its id to `InstantActions` |
-| Long press fires when you didn't mean it | Raise `LongPressTime`, or untick it for that app |
 | Middle-**drag** doesn't work in some app | The click is sent on release, so drags can't pass through. Untick *All middle-button gestures* there |
 | OSD says "Desktop 3" instead of your name for it | Your `VirtualDesktop.ah2` doesn't expose desktop names. Harmless |
 
